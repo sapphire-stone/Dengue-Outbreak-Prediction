@@ -39,7 +39,10 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def predict_for_ward(ward_id: str, date_str: str | None = None) -> dict:
-    model = joblib.load(MODEL_PATH)
+    bundle = joblib.load(MODEL_PATH)
+    model = bundle["model"]
+    feature_cols = bundle.get("features")
+
     raw_df = pd.read_csv(DATA_PATH)
     prepared_df = build_features(raw_df)
 
@@ -52,10 +55,14 @@ def predict_for_ward(ward_id: str, date_str: str | None = None) -> dict:
         matched = ward_rows[ward_rows["date"] == target_date]
         row_df = matched.tail(1) if not matched.empty else ward_rows.tail(1)
     else:
-        row_df = ward_rows.tail(1)
+        row_df = ward_rows.tail(1).copy()
 
-    # Match the exact input columns the trained model expects, if recorded
-    if hasattr(model, "feature_names_in_"):
+    if feature_cols:
+        for col in feature_cols:
+            if col not in row_df.columns:
+                row_df[col] = 0
+        X_input = row_df[feature_cols]
+    elif hasattr(model, "feature_names_in_"):
         expected_cols = list(model.feature_names_in_)
         for col in expected_cols:
             if col not in row_df.columns:
