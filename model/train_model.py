@@ -5,7 +5,7 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_absolute_error
 
 # 1. Load dataset
-csv_path = "data/hackathon_preli_dataset - bangladesh_dengue_large_dataset.csv"
+csv_path = "data/dengue_data.csv"
 df = pd.read_csv(csv_path)
 
 # 2. Sort properly by ward and date
