@@ -124,6 +124,43 @@ page = st.sidebar.radio(
     ["Home", "Check My Area", "Prevention Guide", "Symptom Guide", "AI Surveillance"]
 )
 
+# ---------- Dynamic Page Background ----------
+if page == "AI Surveillance":
+    st.markdown(f"""
+    <style>
+
+    /* Apply surveillance image to the main app background */
+    [data-testid="stAppViewContainer"] {{
+        background-image:
+            linear-gradient(
+                rgba(9, 11, 13, 0.55),
+                rgba(9, 11, 13, 0.75)
+            ),
+            {surveillance_background} !important;
+        background-size: cover !important;
+        background-position: center !important;
+        background-repeat: no-repeat !important;
+        background-attachment: fixed !important;
+    }}
+
+    /* Keep content containers transparent */
+    [data-testid="stMain"],
+    [data-testid="stMain"] > div {{
+        background: transparent !important;
+    }}
+
+    /* Remove the original homepage image from the hero */
+    .hero {{
+        background-image: linear-gradient(
+            90deg,
+            rgba(9, 11, 13, 0.75),
+            rgba(22, 7, 12, 0.80)
+        ) !important;
+    }}
+
+    </style>
+    """, unsafe_allow_html=True)
+
 language = st.sidebar.radio(
     "Language / ভাষা",
     ["English", "বাংলা"],
