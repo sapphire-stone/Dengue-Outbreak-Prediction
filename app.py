@@ -20,21 +20,19 @@ if image_path.exists():
     background = f"url('data:image/png;base64,{encoded}')"
 else:
     background = "none"
-
-
-# ---------- AI Surveillance Background ----------
+# ---------- Full Homepage Background ----------
 surveillance_image_path = Path("assets/surveillance_bg.png")
 
 if surveillance_image_path.exists():
     surveillance_encoded = base64.b64encode(
         surveillance_image_path.read_bytes()
     ).decode()
-
     surveillance_background = (
         f"url('data:image/png;base64,{surveillance_encoded}')"
     )
 else:
     surveillance_background = "none"
+
 
 # ---------- Language ----------
 if "language" not in st.session_state:
@@ -44,8 +42,29 @@ if "language" not in st.session_state:
 st.markdown(f"""
 <style>
 .stApp {{
-    background: #090B0D;
+    background: transparent !important;
     color: #F4E9E9;
+}}
+
+[data-testid="stAppViewContainer"] {{
+    background:
+        linear-gradient(rgba(9, 11, 13, 0.55), rgba(9, 11, 13, 0.70)),
+        {surveillance_background};
+    background-size: cover;
+    background-position: center;
+    background-attachment: fixed;
+    background-repeat: no-repeat;
+}}
+
+[data-testid="stMain"] {{
+    background: transparent !important;
+}}
+
+        {surveillance_background};
+    background-size: cover;
+    background-position: center;
+    background-attachment: fixed;
+    background-repeat: no-repeat;
 }}
 
 [data-testid="stSidebar"] {{
@@ -121,45 +140,8 @@ st.sidebar.caption("Community Dengue Early Warning")
 
 page = st.sidebar.radio(
     "Navigation",
-    ["Home", "Check My Area", "Prevention Guide", "Symptom Guide", "AI Surveillance"]
+    ["Home", "Check My Area", "Prevention Guide", "Symptom Guide"]
 )
-
-# ---------- Dynamic Page Background ----------
-if page == "AI Surveillance":
-    st.markdown(f"""
-    <style>
-
-    /* Apply surveillance image to the main app background */
-    [data-testid="stAppViewContainer"] {{
-        background-image:
-            linear-gradient(
-                rgba(9, 11, 13, 0.55),
-                rgba(9, 11, 13, 0.75)
-            ),
-            {surveillance_background} !important;
-        background-size: cover !important;
-        background-position: center !important;
-        background-repeat: no-repeat !important;
-        background-attachment: fixed !important;
-    }}
-
-    /* Keep content containers transparent */
-    [data-testid="stMain"],
-    [data-testid="stMain"] > div {{
-        background: transparent !important;
-    }}
-
-    /* Remove the original homepage image from the hero */
-    .hero {{
-        background-image: linear-gradient(
-            90deg,
-            rgba(9, 11, 13, 0.75),
-            rgba(22, 7, 12, 0.80)
-        ) !important;
-    }}
-
-    </style>
-    """, unsafe_allow_html=True)
 
 language = st.sidebar.radio(
     "Language / ভাষা",
