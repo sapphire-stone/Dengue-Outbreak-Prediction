@@ -35,3 +35,18 @@ def get_latest_city_summary(city_data, city):
         return None
 
     return city_records.iloc[-1].to_dict()
+
+def get_risk_level(city_data, predicted_cases):
+    # Calculate historical dengue case thresholds
+    low_limit = city_data["dengue_cases"].quantile(0.25)
+    moderate_limit = city_data["dengue_cases"].quantile(0.50)
+    high_limit = city_data["dengue_cases"].quantile(0.75)
+
+    if predicted_cases <= low_limit:
+        return "Low"
+    elif predicted_cases <= moderate_limit:
+        return "Moderate"
+    elif predicted_cases <= high_limit:
+        return "High"
+    else:
+        return "Critical"

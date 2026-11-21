@@ -5,14 +5,14 @@ from pathlib import Path
 from geopy.geocoders import Nominatim
 from geopy.extra.rate_limiter import RateLimiter
 from data_loader import load_dengue_data
-
+from predictor import predict_next_week
 st.set_page_config(
     page_title="DengueWatch AI",
     page_icon="🦟",
     layout="wide"
 )
 
-# ---------- Background Image ----------
+# ---------- Homepage Background ----------
 image_path = Path("assets/mosquito_bg.png")
 
 if image_path.exists():
@@ -20,6 +20,21 @@ if image_path.exists():
     background = f"url('data:image/png;base64,{encoded}')"
 else:
     background = "none"
+
+
+# ---------- AI Surveillance Background ----------
+surveillance_image_path = Path("assets/surveillance_bg.png")
+
+if surveillance_image_path.exists():
+    surveillance_encoded = base64.b64encode(
+        surveillance_image_path.read_bytes()
+    ).decode()
+
+    surveillance_background = (
+        f"url('data:image/png;base64,{surveillance_encoded}')"
+    )
+else:
+    surveillance_background = "none"
 
 # ---------- Language ----------
 if "language" not in st.session_state:
@@ -376,6 +391,39 @@ with col2:
                                 "Source: dengue_dataset.csv. Weather values are "
                                 "city-level averages across the dataset's wards."
                             )
+
+                            # ---------- AI Prediction ----------
+                            st.markdown("### 🤖 AI Dengue Prediction")
+                           
+
+                            try:
+                                prediction = predict_next_week(supported_city)
+
+                                if prediction:
+                                    st.metric(
+                                        "Estimated dengue cases for next week",
+                                        f"{prediction['predicted_cases']:,}"
+                                    )
+                                    st.metric(
+                                       "Estimated dengue risk level",
+                                        prediction["risk_level"]
+                                    )
+
+                                    st.caption(
+                                        "Based on historical data up to "
+                                        + prediction["last_recorded_week"].strftime("%d %B %Y")
+                                    )
+
+                                    st.warning(
+                                        "Historical model demonstration only. "
+                                        "This is not a live forecast."
+                                    )
+                                else:
+                                    st.info("Prediction is unavailable.")
+
+                            except Exception as error:
+                                st.error(f"Prediction error: {error}")
+                                st.caption(f"Technical detail: {error}")
 
             except Exception as error:
                 st.error(
