@@ -2,9 +2,14 @@
 import streamlit as st
 import base64
 from pathlib import Path
+from pathlib import Path
+from geopy.geocoders import Nominatim
+from geopy.extra.rate_limiter import RateLimiter
+from predict import predict_for_ward
+from data_loader import load_dengue_data
 
 st.set_page_config(
-    page_title="DengueWatch AI",
+    page_title="DengueWatch",
     page_icon="🦟",
     layout="wide"
 )
