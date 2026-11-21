@@ -34,7 +34,17 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
                 if lag_col not in data.columns:
                     group_series = data.groupby("ward_id")[col] if "ward_id" in data.columns else data[col]
                     data[lag_col] = group_series.shift(weeks * 7).bfill()
-
+    alias_map = {
+        "rain_lag_1w": "rainfall_mm_lag_1w",
+        "rain_lag_2w": "rainfall_mm_lag_2w",
+        "rain_lag_3w": "rainfall_mm_lag_3w",
+        "rain_lag_4w": "rainfall_mm_lag_4w",
+        "temp_lag_1w": "avg_temp_c_lag_1w",
+        "temp_lag_2w": "avg_temp_c_lag_2w",
+    }
+    for target_col, source_col in alias_map.items():
+        if target_col not in data.columns and source_col in data.columns:
+            data[target_col] = data[source_col]
     return data
 
 
