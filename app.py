@@ -1,118 +1,26 @@
-import re
 import base64
 from pathlib import Path
-import requests
+import pandas as pd
 import streamlit as st
-from geopy.geocoders import Nominatim
-from geopy.extra.rate_limiter import RateLimiter
-from streamlit_geolocation import streamlit_geolocation
+from predict import get_available_wards, predict_for_ward
+
 st.set_page_config(
-    page_title="DengueWatch AI",
+    page_title="DengueWatch",
     page_icon="🦟",
     layout="wide"
 )
 
-# ---------- Live Weather ----------
-@st.cache_data(ttl=600)
-def get_live_weather(latitude, longitude):
-    url = "https://api.open-meteo.com/v1/forecast"
-    params = {
-        "latitude": latitude,
-        "longitude": longitude,
-        "current": "temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code",
-        "daily": "precipitation_sum",
-        "forecast_days": 1,
-        "timezone": "auto"
-    }
-    response = requests.get(url, params=params, timeout=15)
-    response.raise_for_status()
-    return response.json()
+BASE_DIR = Path(__file__).resolve().parent
+DATA_PATH = BASE_DIR / "data" / "dengue_data.csv"
 
-def get_weather_description(code):
-    descriptions = {
-        0: "Clear sky",
-        1: "Mainly clear",
-        2: "Partly cloudy",
-        3: "Overcast",
-        45: "Fog",
-        48: "Fog",
-        51: "Light drizzle",
-        53: "Drizzle",
-        55: "Heavy drizzle",
-        61: "Light rain",
-        63: "Rain",
-        65: "Heavy rain",
-        80: "Rain showers",
-        81: "Rain showers",
-        82: "Heavy rain showers",
-        95: "Thunderstorm",
-        96: "Thunderstorm",
-        99: "Thunderstorm"
-    }
-
-    return descriptions.get(code, "Weather conditions unavailable")
-
-# ---------- Manual Location Search ----------
-@st.cache_resource
-def get_geocoder():
-    geolocator = Nominatim(
-        user_agent="denguewatch_ai_student_project"
-    )
-
-    return RateLimiter(
-        geolocator.geocode,
-        min_delay_seconds=1
-    )
-
-@st.cache_data(ttl=86400)
-def search_location(place):
-    geocoder = get_geocoder()
-
-    clean_place = re.sub(r"\s+", " ", place.strip())
-    try:
-        result = geocoder(
-            f"{clean_place}, Bangladesh",
-            country_codes="bd",
-            exactly_one=True,
-            timeout=15
-        )
-        if result:
-            return {
-                "address": result.address,
-                "latitude": result.latitude,
-                "longitude": result.longitude
-            }
-
-    except Exception:
-        return None
-    
-    return None
-
-# ---------- Homepage Background ----------
-image_path = Path("assets/mosquito_bg.png")
+# ---------- Background Image ----------
+image_path = BASE_DIR / "assets" / "mosquito_bg.png"
 
 if image_path.exists():
-    encoded = base64.b64encode(
-        image_path.read_bytes()
-    ).decode()
-
+    encoded = base64.b64encode(image_path.read_bytes()).decode()
     background = f"url('data:image/png;base64,{encoded}')"
 else:
     background = "none"
-
-# ---------- Full Homepage Background ----------
-surveillance_image_path = Path("assets/surveillance_bg.png")
-
-if surveillance_image_path.exists():
-    surveillance_encoded = base64.b64encode(
-        surveillance_image_path.read_bytes()
-    ).decode()
-
-    surveillance_background = (
-        f"url('data:image/png;base64,{surveillance_encoded}')"
-    )
-else:
-    surveillance_background = "none"
 
 # ---------- Language ----------
 if "language" not in st.session_state:
@@ -122,22 +30,8 @@ if "language" not in st.session_state:
 st.markdown(f"""
 <style>
 .stApp {{
-    background: transparent !important;
+    background: #090B0D;
     color: #F4E9E9;
-}}
-
-[data-testid="stAppViewContainer"] {{
-    background:
-        linear-gradient(rgba(9, 11, 13, 0.55), rgba(9, 11, 13, 0.70)),
-        {surveillance_background};
-    background-size: cover;
-    background-position: center;
-    background-attachment: fixed;
-    background-repeat: no-repeat;
-}}
-
-[data-testid="stMain"] {{
-    background: transparent !important;
 }}
 
 [data-testid="stSidebar"] {{
@@ -207,14 +101,13 @@ div.stButton > button:hover {{
 </style>
 """, unsafe_allow_html=True)
 
-
 # ---------- Sidebar ----------
-st.sidebar.title("🦟 DengueWatch AI")
+st.sidebar.title("🦟 DengueWatch")
 st.sidebar.caption("Community Dengue Early Warning")
 
 page = st.sidebar.radio(
     "Navigation",
-    ["Home", "Check My Area", "Prevention Guide", "Symptom Guide"]
+    ["Home", "Check My Area", "Prevention Guide", "Symptom Guide", "AI Surveillance"]
 )
 
 language = st.sidebar.radio(
@@ -226,49 +119,23 @@ language = st.sidebar.radio(
 # ---------- Text Content ----------
 if language == "English":
     title = "Know Your Area. Stay Ahead of Dengue."
-    subtitle = (
-        "Community-level dengue awareness and early risk monitoring "
-        "powered by weather patterns and AI."
-    )
-
-    check_text = "Check Your Area's Risk"
+    subtitle = "Ward-level dengue risk prediction powered by historical weather and surveillance data."
+    check_text = "Check Your Ward's Risk"
     tips_title = "Protect Yourself This Week"
-
     tips = [
-        (
-            "🪣 Remove Standing Water",
-            "Empty water from buckets, pots, trays and unused containers."
-        ),
-        (
-            "🚰 Cover Water Storage",
-            "Keep water tanks and containers tightly covered."
-        ),
-        (
-            "🛡️ Prevent Mosquito Bites",
-            "Use mosquito nets, repellents and protective clothing."
-        )
+        ("🪣 Remove Standing Water", "Empty water from buckets, pots, trays and unused containers."),
+        ("🚰 Cover Water Storage", "Keep water tanks and containers tightly covered."),
+        ("🛡️ Prevent Mosquito Bites", "Use mosquito nets, repellents and protective clothing.")
     ]
-
 else:
     title = "আপনার এলাকার ঝুঁকি জানুন, ডেঙ্গু থেকে সচেতন থাকুন।"
-    subtitle = "আবহাওয়ার তথ্য ও AI-এর সাহায্যে ডেঙ্গুর ঝুঁকি পর্যবেক্ষণ এবং জনসচেতনতা।"
-
-    check_text = "আপনার এলাকার ঝুঁকি দেখুন"
+    subtitle = "আবহাওয়া ও পর্যবেক্ষণ তথ্যের ভিত্তিতে ওয়ার্ডভিত্তিক ডেঙ্গু ঝুঁকির পূর্বাভাস।"
+    check_text = "আপনার ওয়ার্ডের ঝুঁকি দেখুন"
     tips_title = "এই সপ্তাহে নিজেকে সুরক্ষিত রাখুন"
-
     tips = [
-        (
-            "🪣 জমে থাকা পানি সরান",
-            "বালতি, টব ও অন্যান্য পাত্রের জমে থাকা পানি ফেলে দিন।"
-        ),
-        (
-            "🚰 পানির পাত্র ঢেকে রাখুন",
-            "পানির ট্যাংক ও পাত্র ভালোভাবে ঢেকে রাখুন।"
-        ),
-        (
-            "🛡️ মশার কামড় থেকে বাঁচুন",
-            "মশারি, মশা প্রতিরোধক ও সুরক্ষামূলক পোশাক ব্যবহার করুন।"
-        )
+        ("🪣 জমে থাকা পানি সরান", "বালতি, টব ও অন্যান্য পাত্রের জমে থাকা পানি ফেলে দিন।"),
+        ("🚰 পানির পাত্র ঢেকে রাখুন", "পানির ট্যাংক ও পাত্র ভালোভাবে ঢেকে রাখুন।"),
+        ("🛡️ মশার কামড় থেকে বাঁচুন", "মশারি, মশা প্রতিরোধক ও সুরক্ষামূলক পোশাক ব্যবহার করুন।")
     ]
 
 # ---------- Hero ----------
@@ -281,190 +148,113 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 st.write("")
+
+
+@st.cache_data
+def get_ward_weather_row(ward_id: str) -> dict:
+    df = pd.read_csv(DATA_PATH)
+    if "ward_id" not in df.columns:
+        return {}
+    rows = df[df["ward_id"].astype(str) == str(ward_id)].copy()
+    if rows.empty:
+        return {}
+    if "date" in rows.columns:
+        rows["date"] = pd.to_datetime(rows["date"], errors="coerce")
+        rows = rows.sort_values("date")
+    latest = rows.iloc[-1]
+    return {
+        "city": latest.get("city", "N/A"),
+        "avg_temp_c": latest.get("avg_temp_c"),
+        "relative_humidity_pct": latest.get("relative_humidity_pct"),
+        "rainfall_mm": latest.get("rainfall_mm"),
+    }
+
+
 # ---------- Risk Checker ----------
 st.markdown(f"## 📍 {check_text}")
 
-st.markdown("### 📍 Detect Your Current Location")
+available_wards = get_available_wards()
 
-gps_location = streamlit_geolocation()
-
-latitude = None
-longitude = None
-location_name = "Your detected location"
-
-# ---------- GPS Location ----------
-if (
-    gps_location
-    and gps_location.get("latitude") is not None
-    and gps_location.get("longitude") is not None
-):
-    latitude = gps_location["latitude"]
-    longitude = gps_location["longitude"]
-
-    st.success("Your location was detected successfully!")
-
-    st.caption(
-        f"GPS Coordinates: {latitude:.5f}, {longitude:.5f}"
-    )
-
-else:
-    st.info(
-        "Allow location access in your browser to detect your current location."
-    )
-
-# ---------- Manual Location Backup ----------
-st.markdown("### Or Search Your Location")
-
-col1, col2 = st.columns([1.5, 1])
+col1, col2 = st.columns([1, 1.5])
 
 with col1:
-    location_query = st.text_input(
-        "Enter your area",
-        placeholder="Example: Agrabad, Chattogram"
+    selected_ward = st.selectbox(
+        "Select Ward ID / ওয়ার্ড আইডি নির্বাচন করুন",
+        options=available_wards if available_wards else ["No wards found"],
+        index=0
     )
+
+    typed_ward = st.text_input(
+        "Or type a Ward ID",
+        placeholder="Example: CCC_Ward_01"
+    )
+
+    ward_to_check = (
+        typed_ward.strip()
+        if typed_ward.strip()
+        else (selected_ward if available_wards else "")
+    )
+
+    check_button = st.button("Check Dengue Risk", use_container_width=True)
 
 with col2:
-    st.write("")
-    st.write("")
+    if check_button:
+        if not ward_to_check:
+            st.warning("Please select or enter a Ward ID first.")
+        else:
+            try:
+                with st.spinner(f"Running model prediction for {ward_to_check}..."):
+                    pred = predict_for_ward(ward_to_check)
+                    weather = get_ward_weather_row(ward_to_check)
 
-    check_button = st.button(
-        "Use This Location",
-        use_container_width=True
-    )
+                risk = pred["risk_tier"]
+                risk_colors = {
+                    "Low": "#B6D96C",
+                    "Medium": "#E8C76A",
+                    "Moderate": "#E8C76A",
+                    "High": "#E46C78",
+                    "Critical": "#FF4D5D"
+                }
+                risk_color = risk_colors.get(risk, "#E8C76A")
 
-if check_button:
-    if not location_query.strip():
-        st.warning("Please enter a location.")
+                temp_val = weather.get("avg_temp_c")
+                hum_val = weather.get("relative_humidity_pct")
+                rain_val = weather.get("rainfall_mm")
+                city_name = weather.get("city", "N/A")
+
+                temp_str = f"{float(temp_val):.1f}°C" if pd.notna(temp_val) else "N/A"
+                hum_str = f"{float(hum_val):.1f}%" if pd.notna(hum_val) else "N/A"
+                rain_str = f"{float(rain_val):.1f} mm" if pd.notna(rain_val) else "N/A"
+
+                st.markdown(f"""
+                <div class="risk-card">
+                    <div class="small-label">MODEL RISK PREDICTION</div>
+                    <h2 style="color:{risk_color};">⚠️ {risk} Risk</h2>
+                    <p><b>Ward ID:</b> {pred["ward_id"]} &nbsp;|&nbsp; <b>City:</b> {city_name} &nbsp;|&nbsp; <b>Date:</b> {pred["date"]}</p>
+                    <p><b>Predicted Cases:</b> {pred["predicted_cases"]:.2f}</p>
+                    <hr>
+                    <b>Weather Information (from dataset)</b>
+                    <ul>
+                        <li>Temperature: {temp_str}</li>
+                        <li>Humidity: {hum_str}</li>
+                        <li>Rainfall: {rain_str}</li>
+                    </ul>
+                </div>
+                """, unsafe_allow_html=True)
+
+                if pred.get("top_drivers"):
+                    st.markdown("### 📊 Top Model Drivers")
+                    for item in pred["top_drivers"]:
+                        st.write(f"- **{item['feature']}**: {item['importance']}")
+
+            except Exception as error:
+                st.error(f"Could not predict for '{ward_to_check}': {error}")
     else:
-        with st.spinner("Finding your location..."):
-            manual_location = search_location(location_query)
-
-        if manual_location:
-            latitude = manual_location["latitude"]
-            longitude = manual_location["longitude"]
-            location_name = manual_location["address"]
-
-            st.session_state.manual_latitude = latitude
-            st.session_state.manual_longitude = longitude
-            st.session_state.manual_location_name = location_name
-
-            st.success("Location found successfully!")
-
-        else:
-            st.error("Location not found. Please check the spelling.")
-
-# Use manually selected location when available
-if (
-    not check_button
-    and st.session_state.get("manual_latitude") is not None
-):
-    latitude = st.session_state.manual_latitude
-    longitude = st.session_state.manual_longitude
-    location_name = st.session_state.manual_location_name
-
-
-# ---------- Live Weather and Risk Indicator ----------
-if latitude is not None and longitude is not None:
-
-    try:
-        with st.spinner("Loading live weather for your area..."):
-
-            weather = get_live_weather(latitude, longitude)
-            current = weather["current"]
-            daily = weather["daily"]
-            temperature = current["temperature_2m"]
-            humidity = current["relative_humidity_2m"]
-            wind_speed = current["wind_speed_10m"]
-            weather_code = current["weather_code"]
-            rainfall = daily["precipitation_sum"][0]
-        st.markdown("---")
-        st.markdown("### 🌦️ Live Weather Conditions")
-        if location_name != "Your detected location":
-            st.caption(f"Location: {location_name}")
-        st.info(get_weather_description(weather_code))
-        metric1, metric2 = st.columns(2)
-        metric1.metric(
-            "Temperature",
-            f"{temperature} °C"
-        )
-
-        metric2.metric(
-            "Humidity",
-            f"{humidity}%"
-        )
-
-        metric3, metric4 = st.columns(2)
-        metric3.metric(
-            "Today's Rainfall",
-            f"{rainfall} mm"
-        )
-
-        metric4.metric(
-            "Wind Speed",
-            f"{wind_speed} km/h"
-        )
-
-        # ---------- Weather-Based Risk Indicator ----------
-        st.markdown("---")
-        st.markdown("### 🦟 Weather-Based Dengue Risk Indicator")
-
-        score = 0
-        if 25 <= temperature <= 32:
-            score += 1
-
-        if humidity >= 70:
-            score += 1
-
-        if rainfall >= 2:
-            score += 1
-
-        if score == 0:
-            risk_level = "Low"
-            explanation = (
-                "Fewer of the selected mosquito-favorable "
-                "weather conditions are currently present."
-            )
-        elif score == 1:
-            risk_level = "Moderate"
-            explanation = (
-                "Some current weather conditions may favor "
-                "mosquito activity."
-            )
-
-        else:
-            risk_level = "High"
-            explanation = (
-                "Several current weather conditions may favor "
-                "mosquito activity."
-            )
-
-        st.markdown(
-            f"""
-            <div class="risk-card">
-                <div class="small-label">LOCAL WEATHER INDICATOR</div>
-                <h1 style="color:#E8C76A;">{risk_level} Risk</h1>
-                <p>{explanation}</p>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-        st.caption(
-            "This is an illustrative weather-based environmental indicator, "
-            "not a validated dengue prediction. Weather alone cannot confirm "
-            "dengue cases or an outbreak."
-        )
-
-        st.caption(
-            f"Weather data time: {current['time']}"
-        )
-
-    except Exception as error:
-        st.error("Unable to load live weather data.")
-        st.caption(f"Technical detail: {error}")
+        st.info("Select or type a Ward ID and click **Check Dengue Risk** to see your trained model's prediction.")
 
 # ---------- Prevention ----------
 st.markdown(f"## 🛡️ {tips_title}")
+
 cols = st.columns(3)
 
 for col, tip in zip(cols, tips):
@@ -483,6 +273,6 @@ st.markdown("""
 ---
 <div style="text-align:center;color:#8F8589;">
 DengueWatch AI · Community Awareness & Early Warning<br>
-An academic project — weather indicators are not a medical diagnosis.
+An academic project — predictions are not a medical diagnosis.
 </div>
 """, unsafe_allow_html=True)
