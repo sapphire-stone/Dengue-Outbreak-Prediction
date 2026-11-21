@@ -1,25 +1,105 @@
 import re
-import streamlit as st
 import base64
 from pathlib import Path
+import requests
+import streamlit as st
 from geopy.geocoders import Nominatim
 from geopy.extra.rate_limiter import RateLimiter
-from data_loader import load_dengue_data
-from predictor import predict_next_week
+from streamlit_geolocation import streamlit_geolocation
 st.set_page_config(
     page_title="DengueWatch AI",
     page_icon="🦟",
     layout="wide"
 )
 
+# ---------- Live Weather ----------
+@st.cache_data(ttl=600)
+def get_live_weather(latitude, longitude):
+    url = "https://api.open-meteo.com/v1/forecast"
+    params = {
+        "latitude": latitude,
+        "longitude": longitude,
+        "current": "temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code",
+        "daily": "precipitation_sum",
+        "forecast_days": 1,
+        "timezone": "auto"
+    }
+    response = requests.get(url, params=params, timeout=15)
+    response.raise_for_status()
+    return response.json()
+
+def get_weather_description(code):
+    descriptions = {
+        0: "Clear sky",
+        1: "Mainly clear",
+        2: "Partly cloudy",
+        3: "Overcast",
+        45: "Fog",
+        48: "Fog",
+        51: "Light drizzle",
+        53: "Drizzle",
+        55: "Heavy drizzle",
+        61: "Light rain",
+        63: "Rain",
+        65: "Heavy rain",
+        80: "Rain showers",
+        81: "Rain showers",
+        82: "Heavy rain showers",
+        95: "Thunderstorm",
+        96: "Thunderstorm",
+        99: "Thunderstorm"
+    }
+
+    return descriptions.get(code, "Weather conditions unavailable")
+
+# ---------- Manual Location Search ----------
+@st.cache_resource
+def get_geocoder():
+    geolocator = Nominatim(
+        user_agent="denguewatch_ai_student_project"
+    )
+
+    return RateLimiter(
+        geolocator.geocode,
+        min_delay_seconds=1
+    )
+
+@st.cache_data(ttl=86400)
+def search_location(place):
+    geocoder = get_geocoder()
+
+    clean_place = re.sub(r"\s+", " ", place.strip())
+    try:
+        result = geocoder(
+            f"{clean_place}, Bangladesh",
+            country_codes="bd",
+            exactly_one=True,
+            timeout=15
+        )
+        if result:
+            return {
+                "address": result.address,
+                "latitude": result.latitude,
+                "longitude": result.longitude
+            }
+
+    except Exception:
+        return None
+    
+    return None
+
 # ---------- Homepage Background ----------
 image_path = Path("assets/mosquito_bg.png")
 
 if image_path.exists():
-    encoded = base64.b64encode(image_path.read_bytes()).decode()
+    encoded = base64.b64encode(
+        image_path.read_bytes()
+    ).decode()
+
     background = f"url('data:image/png;base64,{encoded}')"
 else:
     background = "none"
+
 # ---------- Full Homepage Background ----------
 surveillance_image_path = Path("assets/surveillance_bg.png")
 
@@ -27,12 +107,12 @@ if surveillance_image_path.exists():
     surveillance_encoded = base64.b64encode(
         surveillance_image_path.read_bytes()
     ).decode()
+
     surveillance_background = (
         f"url('data:image/png;base64,{surveillance_encoded}')"
     )
 else:
     surveillance_background = "none"
-
 
 # ---------- Language ----------
 if "language" not in st.session_state:
@@ -58,13 +138,6 @@ st.markdown(f"""
 
 [data-testid="stMain"] {{
     background: transparent !important;
-}}
-
-        {surveillance_background};
-    background-size: cover;
-    background-position: center;
-    background-attachment: fixed;
-    background-repeat: no-repeat;
 }}
 
 [data-testid="stSidebar"] {{
@@ -134,6 +207,7 @@ div.stButton > button:hover {{
 </style>
 """, unsafe_allow_html=True)
 
+
 # ---------- Sidebar ----------
 st.sidebar.title("🦟 DengueWatch AI")
 st.sidebar.caption("Community Dengue Early Warning")
@@ -152,23 +226,49 @@ language = st.sidebar.radio(
 # ---------- Text Content ----------
 if language == "English":
     title = "Know Your Area. Stay Ahead of Dengue."
-    subtitle = "Community-level dengue awareness and early risk monitoring powered by weather patterns and AI."
+    subtitle = (
+        "Community-level dengue awareness and early risk monitoring "
+        "powered by weather patterns and AI."
+    )
+
     check_text = "Check Your Area's Risk"
     tips_title = "Protect Yourself This Week"
+
     tips = [
-        ("🪣 Remove Standing Water", "Empty water from buckets, pots, trays and unused containers."),
-        ("🚰 Cover Water Storage", "Keep water tanks and containers tightly covered."),
-        ("🛡️ Prevent Mosquito Bites", "Use mosquito nets, repellents and protective clothing.")
+        (
+            "🪣 Remove Standing Water",
+            "Empty water from buckets, pots, trays and unused containers."
+        ),
+        (
+            "🚰 Cover Water Storage",
+            "Keep water tanks and containers tightly covered."
+        ),
+        (
+            "🛡️ Prevent Mosquito Bites",
+            "Use mosquito nets, repellents and protective clothing."
+        )
     ]
+
 else:
     title = "আপনার এলাকার ঝুঁকি জানুন, ডেঙ্গু থেকে সচেতন থাকুন।"
     subtitle = "আবহাওয়ার তথ্য ও AI-এর সাহায্যে ডেঙ্গুর ঝুঁকি পর্যবেক্ষণ এবং জনসচেতনতা।"
+
     check_text = "আপনার এলাকার ঝুঁকি দেখুন"
     tips_title = "এই সপ্তাহে নিজেকে সুরক্ষিত রাখুন"
+
     tips = [
-        ("🪣 জমে থাকা পানি সরান", "বালতি, টব ও অন্যান্য পাত্রের জমে থাকা পানি ফেলে দিন।"),
-        ("🚰 পানির পাত্র ঢেকে রাখুন", "পানির ট্যাংক ও পাত্র ভালোভাবে ঢেকে রাখুন।"),
-        ("🛡️ মশার কামড় থেকে বাঁচুন", "মশারি, মশা প্রতিরোধক ও সুরক্ষামূলক পোশাক ব্যবহার করুন।")
+        (
+            "🪣 জমে থাকা পানি সরান",
+            "বালতি, টব ও অন্যান্য পাত্রের জমে থাকা পানি ফেলে দিন।"
+        ),
+        (
+            "🚰 পানির পাত্র ঢেকে রাখুন",
+            "পানির ট্যাংক ও পাত্র ভালোভাবে ঢেকে রাখুন।"
+        ),
+        (
+            "🛡️ মশার কামড় থেকে বাঁচুন",
+            "মশারি, মশা প্রতিরোধক ও সুরক্ষামূলক পোশাক ব্যবহার করুন।"
+        )
     ]
 
 # ---------- Hero ----------
@@ -181,285 +281,190 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 st.write("")
-
-
 # ---------- Risk Checker ----------
 st.markdown(f"## 📍 {check_text}")
 
-# ---------- Historical Dataset ----------
-@st.cache_data
-def get_dataset():
-    return load_dengue_data()
+st.markdown("### 📍 Detect Your Current Location")
 
+gps_location = streamlit_geolocation()
 
-@st.cache_resource
-def get_geocoder():
-    geolocator = Nominatim(
-        user_agent="denguewatch_ai_student_project"
-    )
-    return RateLimiter(
-        geolocator.geocode,
-        min_delay_seconds=1
-    )
+latitude = None
+longitude = None
+location_name = "Your detected location"
 
+# ---------- GPS Location ----------
+if (
+    gps_location
+    and gps_location.get("latitude") is not None
+    and gps_location.get("longitude") is not None
+):
+    latitude = gps_location["latitude"]
+    longitude = gps_location["longitude"]
 
+    st.success("Your location was detected successfully!")
 
-
-@st.cache_data(ttl=86400)
-def search_location(place):
-    geocoder = get_geocoder()
-
-    clean_place = re.sub(r"\s+", " ", place.strip())
-    clean_place = re.sub(
-        r"\bchittagong\b",
-        "Chattogram",
-        clean_place,
-        flags=re.IGNORECASE
+    st.caption(
+        f"GPS Coordinates: {latitude:.5f}, {longitude:.5f}"
     )
 
-    simple_place = re.sub(
-        r"^\d+[/\-\w]*\s+",
-        "",
-        clean_place
-    ).strip()
-
-    search_queries = [
-        f"{clean_place}, Bangladesh",
-        f"{simple_place}, Chattogram, Bangladesh",
-        f"{simple_place}, Bangladesh"
-    ]
-
-    search_queries = list(dict.fromkeys(search_queries))
-
-    for query in search_queries:
-        try:
-            result = geocoder(
-                query,
-                country_codes="bd",
-                addressdetails=True,
-                exactly_one=True,
-                timeout=15
-            )
-
-            if result:
-                address_details = result.raw.get("address", {})
-
-                if address_details.get("country_code", "").casefold() == "bd":
-                    return {
-                        "address": result.address,
-                        "latitude": result.latitude,
-                        "longitude": result.longitude,
-                        "address_details": address_details
-                    }
-
-        except Exception:
-            continue
-
-    return None
-
-
-def identify_supported_city(location):
-    details = location.get("address_details", {})
-    searchable_text = " ".join(str(value) for value in details.values()).casefold()
-    searchable_text += " " + location.get("address", "").casefold()
-
-    if any(term in searchable_text for term in ["chattogram", "chittagong", "চট্টগ্রাম"]):
-        return "Chattogram"
-
-    if any(term in searchable_text for term in ["gazipur", "গাজীপুর"]):
-        return "Gazipur"
-
-    if any(term in searchable_text for term in ["narayanganj", "নারায়ণগঞ্জ", "নারায়ণগঞ্জ"]):
-        return "Narayanganj"
-
-    if any(term in searchable_text for term in ["dhaka", "ঢাকা"]):
-        return "Dhaka (North + South)"
-
-    return None
-
-
-def get_latest_city_observation(df, supported_city):
-    if supported_city == "Dhaka (North + South)":
-        selected_cities = ["Dhaka North", "Dhaka South"]
-    else:
-        selected_cities = [supported_city]
-
-    city_records = df[df["city"].isin(selected_cities)].copy()
-
-    if city_records.empty:
-        return None
-
-    weekly = (
-        city_records.groupby("date")
-        .agg({
-            "dengue_cases": "sum",
-            "rainfall_mm": "mean",
-            "avg_temp_c": "mean",
-            "relative_humidity_pct": "mean"
-        })
-        .reset_index()
-        .sort_values("date")
+else:
+    st.info(
+        "Allow location access in your browser to detect your current location."
     )
 
-    return weekly.iloc[-1]
+# ---------- Manual Location Backup ----------
+st.markdown("### Or Search Your Location")
 
-
-col1, col2 = st.columns([1, 1.5])
+col1, col2 = st.columns([1.5, 1])
 
 with col1:
     location_query = st.text_input(
-        "Search your location / আপনার এলাকা লিখুন",
-        placeholder="Example: Agrabad, Dhaka, Gazipur..."
-    )
-
-    check_button = st.button(
-        "Check Dengue Risk",
-        use_container_width=True
+        "Enter your area",
+        placeholder="Example: Agrabad, Chattogram"
     )
 
 with col2:
-    if check_button:
-        if not location_query.strip():
-            st.warning("Please enter a location first.")
-        else:
-            try:
-                with st.spinner("Searching for your location..."):
-                    location = search_location(location_query.strip())
+    st.write("")
+    st.write("")
 
-                if location is None:
-                    st.error(
-                        "Location not found in Bangladesh. "
-                        "Please check the spelling or try another location."
-                    )
-                else:
-                    st.success("Location found in Bangladesh!")
+    check_button = st.button(
+        "Use This Location",
+        use_container_width=True
+    )
 
-                    st.write("**Matched location:**")
-                    st.write(location["address"])
-
-                    st.caption(
-                        f"Coordinates: {location['latitude']:.5f}, "
-                        f"{location['longitude']:.5f}"
-                    )
-
-                    supported_city = identify_supported_city(location)
-
-                    if supported_city is None:
-                        st.warning(
-                            "This location is not in the five cities covered "
-                            "by our current dataset."
-                        )
-                        st.info(
-                            "Supported cities: Chattogram, Dhaka North, "
-                            "Dhaka South, Gazipur and Narayanganj. "
-                            "No local prediction is available for this location."
-                        )
-                    else:
-                        df = get_dataset()
-                        observation = get_latest_city_observation(df, supported_city)
-
-                        if observation is None:
-                            st.warning("No historical records were found for this city.")
-                        else:
-                            st.markdown(f"""
-                            <div class="risk-card">
-                                <div class="small-label">LATEST HISTORICAL DATA</div>
-                                <h2 style="color:#E8C76A;">
-                                    {supported_city}
-                                </h2>
-                                <p>
-                                    This is a city-level historical observation,
-                                    not a live or AI-generated risk prediction.
-                                </p>
-                            </div>
-                            """, unsafe_allow_html=True)
-
-                            st.caption(
-                                "Recorded week: "
-                                + observation["date"].strftime("%d %B %Y")
-                            )
-
-                            metric1, metric2 = st.columns(2)
-                            metric1.metric(
-                                "Recorded dengue cases",
-                                f"{int(observation['dengue_cases']):,}"
-                            )
-                            metric2.metric(
-                                "Average temperature",
-                                f"{observation['avg_temp_c']:.1f} °C"
-                            )
-
-                            metric3, metric4 = st.columns(2)
-                            metric3.metric(
-                                "Average humidity",
-                                f"{observation['relative_humidity_pct']:.1f}%"
-                            )
-                            metric4.metric(
-                                "Average rainfall",
-                                f"{observation['rainfall_mm']:.1f} mm"
-                            )
-
-                            if supported_city == "Dhaka (North + South)":
-                                st.info(
-                                    "Dhaka North and Dhaka South are combined "
-                                    "because the search result does not identify "
-                                    "which dataset division contains this address."
-                                )
-
-                            st.caption(
-                                "Source: dengue_dataset.csv. Weather values are "
-                                "city-level averages across the dataset's wards."
-                            )
-
-                            # ---------- AI Prediction ----------
-                            st.markdown("### 🤖 AI Dengue Prediction")
-                           
-
-                            try:
-                                prediction = predict_next_week(supported_city)
-
-                                if prediction:
-                                    st.metric(
-                                        "Estimated dengue cases for next week",
-                                        f"{prediction['predicted_cases']:,}"
-                                    )
-                                    st.metric(
-                                       "Estimated dengue risk level",
-                                        prediction["risk_level"]
-                                    )
-
-                                    st.caption(
-                                        "Based on historical data up to "
-                                        + prediction["last_recorded_week"].strftime("%d %B %Y")
-                                    )
-
-                                    st.warning(
-                                        "Historical model demonstration only. "
-                                        "This is not a live forecast."
-                                    )
-                                else:
-                                    st.info("Prediction is unavailable.")
-
-                            except Exception as error:
-                                st.error(f"Prediction error: {error}")
-                                st.caption(f"Technical detail: {error}")
-
-            except Exception as error:
-                st.error(
-                    "Could not load the location or historical dataset. "
-                    "Check your internet connection and project files."
-                )
-                st.caption(f"Technical detail: {error}")
+if check_button:
+    if not location_query.strip():
+        st.warning("Please enter a location.")
     else:
-        st.info(
-            "Enter a Bangladesh location and click the button "
-            "to check whether historical city-level data is available."
+        with st.spinner("Finding your location..."):
+            manual_location = search_location(location_query)
+
+        if manual_location:
+            latitude = manual_location["latitude"]
+            longitude = manual_location["longitude"]
+            location_name = manual_location["address"]
+
+            st.session_state.manual_latitude = latitude
+            st.session_state.manual_longitude = longitude
+            st.session_state.manual_location_name = location_name
+
+            st.success("Location found successfully!")
+
+        else:
+            st.error("Location not found. Please check the spelling.")
+
+# Use manually selected location when available
+if (
+    not check_button
+    and st.session_state.get("manual_latitude") is not None
+):
+    latitude = st.session_state.manual_latitude
+    longitude = st.session_state.manual_longitude
+    location_name = st.session_state.manual_location_name
+
+
+# ---------- Live Weather and Risk Indicator ----------
+if latitude is not None and longitude is not None:
+
+    try:
+        with st.spinner("Loading live weather for your area..."):
+
+            weather = get_live_weather(latitude, longitude)
+            current = weather["current"]
+            daily = weather["daily"]
+            temperature = current["temperature_2m"]
+            humidity = current["relative_humidity_2m"]
+            wind_speed = current["wind_speed_10m"]
+            weather_code = current["weather_code"]
+            rainfall = daily["precipitation_sum"][0]
+        st.markdown("---")
+        st.markdown("### 🌦️ Live Weather Conditions")
+        if location_name != "Your detected location":
+            st.caption(f"Location: {location_name}")
+        st.info(get_weather_description(weather_code))
+        metric1, metric2 = st.columns(2)
+        metric1.metric(
+            "Temperature",
+            f"{temperature} °C"
         )
 
+        metric2.metric(
+            "Humidity",
+            f"{humidity}%"
+        )
+
+        metric3, metric4 = st.columns(2)
+        metric3.metric(
+            "Today's Rainfall",
+            f"{rainfall} mm"
+        )
+
+        metric4.metric(
+            "Wind Speed",
+            f"{wind_speed} km/h"
+        )
+
+        # ---------- Weather-Based Risk Indicator ----------
+        st.markdown("---")
+        st.markdown("### 🦟 Weather-Based Dengue Risk Indicator")
+
+        score = 0
+        if 25 <= temperature <= 32:
+            score += 1
+
+        if humidity >= 70:
+            score += 1
+
+        if rainfall >= 2:
+            score += 1
+
+        if score == 0:
+            risk_level = "Low"
+            explanation = (
+                "Fewer of the selected mosquito-favorable "
+                "weather conditions are currently present."
+            )
+        elif score == 1:
+            risk_level = "Moderate"
+            explanation = (
+                "Some current weather conditions may favor "
+                "mosquito activity."
+            )
+
+        else:
+            risk_level = "High"
+            explanation = (
+                "Several current weather conditions may favor "
+                "mosquito activity."
+            )
+
+        st.markdown(
+            f"""
+            <div class="risk-card">
+                <div class="small-label">LOCAL WEATHER INDICATOR</div>
+                <h1 style="color:#E8C76A;">{risk_level} Risk</h1>
+                <p>{explanation}</p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        st.caption(
+            "This is an illustrative weather-based environmental indicator, "
+            "not a validated dengue prediction. Weather alone cannot confirm "
+            "dengue cases or an outbreak."
+        )
+
+        st.caption(
+            f"Weather data time: {current['time']}"
+        )
+
+    except Exception as error:
+        st.error("Unable to load live weather data.")
+        st.caption(f"Technical detail: {error}")
 
 # ---------- Prevention ----------
 st.markdown(f"## 🛡️ {tips_title}")
-
 cols = st.columns(3)
 
 for col, tip in zip(cols, tips):
@@ -478,6 +483,6 @@ st.markdown("""
 ---
 <div style="text-align:center;color:#8F8589;">
 DengueWatch AI · Community Awareness & Early Warning<br>
-An academic project — predictions are not a medical diagnosis.
+An academic project — weather indicators are not a medical diagnosis.
 </div>
 """, unsafe_allow_html=True)
