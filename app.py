@@ -1,9 +1,10 @@
-
+import re
 import streamlit as st
 import base64
 from pathlib import Path
 from geopy.geocoders import Nominatim
 from geopy.extra.rate_limiter import RateLimiter
+from data_loader import load_dengue_data
 
 st.set_page_config(
     page_title="DengueWatch AI",
@@ -151,17 +152,11 @@ st.write("")
 # ---------- Risk Checker ----------
 st.markdown(f"## 📍 {check_text}")
 
-# Sample data for demonstration only
-# ---------- Bangladesh Location Search ----------
+# ---------- Historical Dataset ----------
+@st.cache_data
+def get_dataset():
+    return load_dengue_data()
 
-area_data = {
-    "Agrabad": {"risk": "High", "temperature": 32, "humidity": 82, "rainfall": 145},
-    "Halishahar": {"risk": "Critical", "temperature": 33, "humidity": 88, "rainfall": 190},
-    "Panchlaish": {"risk": "Moderate", "temperature": 31, "humidity": 76, "rainfall": 95},
-    "Nasirabad": {"risk": "Low", "temperature": 30, "humidity": 68, "rainfall": 40},
-    "Patenga": {"risk": "High", "temperature": 32, "humidity": 85, "rainfall": 160},
-    "Khulshi": {"risk": "Moderate", "temperature": 31, "humidity": 74, "rainfall": 80}
-}
 
 @st.cache_resource
 def get_geocoder():
@@ -174,25 +169,105 @@ def get_geocoder():
     )
 
 
+
+
 @st.cache_data(ttl=86400)
 def search_location(place):
     geocoder = get_geocoder()
 
-    result = geocoder(
-        f"{place}, Bangladesh",
-        country_codes="bd",
-        exactly_one=True,
-        timeout=10
+    clean_place = re.sub(r"\s+", " ", place.strip())
+    clean_place = re.sub(
+        r"\bchittagong\b",
+        "Chattogram",
+        clean_place,
+        flags=re.IGNORECASE
     )
 
-    if result:
-        return {
-            "address": result.address,
-            "latitude": result.latitude,
-            "longitude": result.longitude
-        }
+    simple_place = re.sub(
+        r"^\d+[/\-\w]*\s+",
+        "",
+        clean_place
+    ).strip()
+
+    search_queries = [
+        f"{clean_place}, Bangladesh",
+        f"{simple_place}, Chattogram, Bangladesh",
+        f"{simple_place}, Bangladesh"
+    ]
+
+    search_queries = list(dict.fromkeys(search_queries))
+
+    for query in search_queries:
+        try:
+            result = geocoder(
+                query,
+                country_codes="bd",
+                addressdetails=True,
+                exactly_one=True,
+                timeout=15
+            )
+
+            if result:
+                address_details = result.raw.get("address", {})
+
+                if address_details.get("country_code", "").casefold() == "bd":
+                    return {
+                        "address": result.address,
+                        "latitude": result.latitude,
+                        "longitude": result.longitude,
+                        "address_details": address_details
+                    }
+
+        except Exception:
+            continue
 
     return None
+
+
+def identify_supported_city(location):
+    details = location.get("address_details", {})
+    searchable_text = " ".join(str(value) for value in details.values()).casefold()
+    searchable_text += " " + location.get("address", "").casefold()
+
+    if any(term in searchable_text for term in ["chattogram", "chittagong", "চট্টগ্রাম"]):
+        return "Chattogram"
+
+    if any(term in searchable_text for term in ["gazipur", "গাজীপুর"]):
+        return "Gazipur"
+
+    if any(term in searchable_text for term in ["narayanganj", "নারায়ণগঞ্জ", "নারায়ণগঞ্জ"]):
+        return "Narayanganj"
+
+    if any(term in searchable_text for term in ["dhaka", "ঢাকা"]):
+        return "Dhaka (North + South)"
+
+    return None
+
+
+def get_latest_city_observation(df, supported_city):
+    if supported_city == "Dhaka (North + South)":
+        selected_cities = ["Dhaka North", "Dhaka South"]
+    else:
+        selected_cities = [supported_city]
+
+    city_records = df[df["city"].isin(selected_cities)].copy()
+
+    if city_records.empty:
+        return None
+
+    weekly = (
+        city_records.groupby("date")
+        .agg({
+            "dengue_cases": "sum",
+            "rainfall_mm": "mean",
+            "avg_temp_c": "mean",
+            "relative_humidity_pct": "mean"
+        })
+        .reset_index()
+        .sort_values("date")
+    )
+
+    return weekly.iloc[-1]
 
 
 col1, col2 = st.columns([1, 1.5])
@@ -200,7 +275,7 @@ col1, col2 = st.columns([1, 1.5])
 with col1:
     location_query = st.text_input(
         "Search your location / আপনার এলাকা লিখুন",
-        placeholder="Example: Agrabad, Dhaka, Cox's Bazar..."
+        placeholder="Example: Agrabad, Dhaka, Gazipur..."
     )
 
     check_button = st.button(
@@ -210,10 +285,8 @@ with col1:
 
 with col2:
     if check_button:
-
         if not location_query.strip():
             st.warning("Please enter a location first.")
-
         else:
             try:
                 with st.spinner("Searching for your location..."):
@@ -224,7 +297,6 @@ with col2:
                         "Location not found in Bangladesh. "
                         "Please check the spelling or try another location."
                     )
-
                 else:
                     st.success("Location found in Bangladesh!")
 
@@ -236,73 +308,85 @@ with col2:
                         f"{location['longitude']:.5f}"
                     )
 
-                    matched_area = next(
-                        (
-                            name for name in area_data
-                            if name.casefold() in location["address"].casefold()
-                        ),
-                        None
-                    )
+                    supported_city = identify_supported_city(location)
 
-                    if matched_area:
-                        data = area_data[matched_area]
-                        risk = data["risk"]
-
-                        risk_colors = {
-                            "Low": "#B6D96C",
-                            "Moderate": "#E8C76A",
-                            "High": "#E46C78",
-                            "Critical": "#FF4D5D"
-                        }
-
-                        risk_color = risk_colors[risk]
-
-                        st.markdown(f"""
-                        <div class="risk-card">
-                            <div class="small-label">SAMPLE RISK RESULT</div>
-                            <h2 style="color:{risk_color};">
-                                ⚠️ {risk} Risk
-                            </h2>
-                            <p>Area: <b>{matched_area}</b></p>
-                            <hr>
-                            <b>Weather Information</b>
-                            <ul>
-                                <li>Temperature: {data['temperature']}°C</li>
-                                <li>Humidity: {data['humidity']}%</li>
-                                <li>Recent rainfall: {data['rainfall']} mm</li>
-                            </ul>
-                            <b>Why this risk level?</b>
-                            <p>
-                                Temperature, humidity and recent rainfall
-                                are sample environmental indicators.
-                            </p>
-                            <p style="color:#B6D96C;">
-                                Sample data only — not an actual AI prediction.
-                            </p>
-                        </div>
-                        """, unsafe_allow_html=True)
-
-                    else:
+                    if supported_city is None:
                         st.warning(
-                            "This location was found, but it is not covered "
-                            "by our current sample dengue risk data."
+                            "This location is not in the five cities covered "
+                            "by our current dataset."
                         )
-
                         st.info(
-                            "We cannot provide a reliable local risk prediction "
-                            "for this location yet."
+                            "Supported cities: Chattogram, Dhaka North, "
+                            "Dhaka South, Gazipur and Narayanganj. "
+                            "No local prediction is available for this location."
                         )
+                    else:
+                        df = get_dataset()
+                        observation = get_latest_city_observation(df, supported_city)
 
-            except Exception:
+                        if observation is None:
+                            st.warning("No historical records were found for this city.")
+                        else:
+                            st.markdown(f"""
+                            <div class="risk-card">
+                                <div class="small-label">LATEST HISTORICAL DATA</div>
+                                <h2 style="color:#E8C76A;">
+                                    {supported_city}
+                                </h2>
+                                <p>
+                                    This is a city-level historical observation,
+                                    not a live or AI-generated risk prediction.
+                                </p>
+                            </div>
+                            """, unsafe_allow_html=True)
+
+                            st.caption(
+                                "Recorded week: "
+                                + observation["date"].strftime("%d %B %Y")
+                            )
+
+                            metric1, metric2 = st.columns(2)
+                            metric1.metric(
+                                "Recorded dengue cases",
+                                f"{int(observation['dengue_cases']):,}"
+                            )
+                            metric2.metric(
+                                "Average temperature",
+                                f"{observation['avg_temp_c']:.1f} °C"
+                            )
+
+                            metric3, metric4 = st.columns(2)
+                            metric3.metric(
+                                "Average humidity",
+                                f"{observation['relative_humidity_pct']:.1f}%"
+                            )
+                            metric4.metric(
+                                "Average rainfall",
+                                f"{observation['rainfall_mm']:.1f} mm"
+                            )
+
+                            if supported_city == "Dhaka (North + South)":
+                                st.info(
+                                    "Dhaka North and Dhaka South are combined "
+                                    "because the search result does not identify "
+                                    "which dataset division contains this address."
+                                )
+
+                            st.caption(
+                                "Source: dengue_dataset.csv. Weather values are "
+                                "city-level averages across the dataset's wards."
+                            )
+
+            except Exception as error:
                 st.error(
-                    "Could not connect to the location search service. "
-                    "Please try again later."
+                    "Could not load the location or historical dataset. "
+                    "Check your internet connection and project files."
                 )
-
+                st.caption(f"Technical detail: {error}")
     else:
         st.info(
             "Enter a Bangladesh location and click the button "
-            "to search for it."
+            "to check whether historical city-level data is available."
         )
 
 
