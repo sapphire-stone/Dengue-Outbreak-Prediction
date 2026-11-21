@@ -2,6 +2,8 @@
 import streamlit as st
 import base64
 from pathlib import Path
+from geopy.geocoders import Nominatim
+from geopy.extra.rate_limiter import RateLimiter
 
 st.set_page_config(
     page_title="DengueWatch AI",
@@ -150,6 +152,8 @@ st.write("")
 st.markdown(f"## 📍 {check_text}")
 
 # Sample data for demonstration only
+# ---------- Bangladesh Location Search ----------
+
 area_data = {
     "Agrabad": {"risk": "High", "temperature": 32, "humidity": 82, "rainfall": 145},
     "Halishahar": {"risk": "Critical", "temperature": 33, "humidity": 88, "rainfall": 190},
@@ -159,49 +163,148 @@ area_data = {
     "Khulshi": {"risk": "Moderate", "temperature": 31, "humidity": 74, "rainfall": 80}
 }
 
+@st.cache_resource
+def get_geocoder():
+    geolocator = Nominatim(
+        user_agent="denguewatch_ai_student_project"
+    )
+    return RateLimiter(
+        geolocator.geocode,
+        min_delay_seconds=1
+    )
+
+
+@st.cache_data(ttl=86400)
+def search_location(place):
+    geocoder = get_geocoder()
+
+    result = geocoder(
+        f"{place}, Bangladesh",
+        country_codes="bd",
+        exactly_one=True,
+        timeout=10
+    )
+
+    if result:
+        return {
+            "address": result.address,
+            "latitude": result.latitude,
+            "longitude": result.longitude
+        }
+
+    return None
+
+
 col1, col2 = st.columns([1, 1.5])
 
 with col1:
-    area = st.selectbox(
-        "Select your area / এলাকা নির্বাচন করুন",
-        list(area_data.keys())
+    location_query = st.text_input(
+        "Search your location / আপনার এলাকা লিখুন",
+        placeholder="Example: Agrabad, Dhaka, Cox's Bazar..."
     )
 
-    check_button = st.button("Check Dengue Risk", use_container_width=True)
+    check_button = st.button(
+        "Check Dengue Risk",
+        use_container_width=True
+    )
 
 with col2:
     if check_button:
-        data = area_data[area]
-        risk = data["risk"]
 
-        risk_colors = {
-            "Low": "#B6D96C",
-            "Moderate": "#E8C76A",
-            "High": "#E46C78",
-            "Critical": "#FF4D5D"
-        }
+        if not location_query.strip():
+            st.warning("Please enter a location first.")
 
-        risk_color = risk_colors[risk]
+        else:
+            try:
+                with st.spinner("Searching for your location..."):
+                    location = search_location(location_query.strip())
 
-        st.markdown(f"""
-        <div class="risk-card">
-            <div class="small-label">SAMPLE RISK RESULT</div>
-            <h2 style="color:{risk_color};">⚠️ {risk} Risk</h2>
-            <p>Area: <b>{area}</b></p>
-            <hr>
-            <b>Weather Information</b>
-            <ul>
-                <li>Temperature: {data['temperature']}°C</li>
-                <li>Humidity: {data['humidity']}%</li>
-                <li>Recent rainfall: {data['rainfall']} mm</li>
-            </ul>
-            <b>Why this risk level?</b>
-            <p>Temperature, humidity and recent rainfall are sample environmental indicators used to demonstrate dengue risk monitoring.</p>
-            <p style="color:#B6D96C;">This is sample data only, not an actual AI prediction.</p>
-        </div>
-        """, unsafe_allow_html=True)
+                if location is None:
+                    st.error(
+                        "Location not found in Bangladesh. "
+                        "Please check the spelling or try another location."
+                    )
+
+                else:
+                    st.success("Location found in Bangladesh!")
+
+                    st.write("**Matched location:**")
+                    st.write(location["address"])
+
+                    st.caption(
+                        f"Coordinates: {location['latitude']:.5f}, "
+                        f"{location['longitude']:.5f}"
+                    )
+
+                    matched_area = next(
+                        (
+                            name for name in area_data
+                            if name.casefold() in location["address"].casefold()
+                        ),
+                        None
+                    )
+
+                    if matched_area:
+                        data = area_data[matched_area]
+                        risk = data["risk"]
+
+                        risk_colors = {
+                            "Low": "#B6D96C",
+                            "Moderate": "#E8C76A",
+                            "High": "#E46C78",
+                            "Critical": "#FF4D5D"
+                        }
+
+                        risk_color = risk_colors[risk]
+
+                        st.markdown(f"""
+                        <div class="risk-card">
+                            <div class="small-label">SAMPLE RISK RESULT</div>
+                            <h2 style="color:{risk_color};">
+                                ⚠️ {risk} Risk
+                            </h2>
+                            <p>Area: <b>{matched_area}</b></p>
+                            <hr>
+                            <b>Weather Information</b>
+                            <ul>
+                                <li>Temperature: {data['temperature']}°C</li>
+                                <li>Humidity: {data['humidity']}%</li>
+                                <li>Recent rainfall: {data['rainfall']} mm</li>
+                            </ul>
+                            <b>Why this risk level?</b>
+                            <p>
+                                Temperature, humidity and recent rainfall
+                                are sample environmental indicators.
+                            </p>
+                            <p style="color:#B6D96C;">
+                                Sample data only — not an actual AI prediction.
+                            </p>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                    else:
+                        st.warning(
+                            "This location was found, but it is not covered "
+                            "by our current sample dengue risk data."
+                        )
+
+                        st.info(
+                            "We cannot provide a reliable local risk prediction "
+                            "for this location yet."
+                        )
+
+            except Exception:
+                st.error(
+                    "Could not connect to the location search service. "
+                    "Please try again later."
+                )
+
     else:
-        st.info("Select an area and click the button to view its sample dengue risk.")
+        st.info(
+            "Enter a Bangladesh location and click the button "
+            "to search for it."
+        )
+
 
 # ---------- Prevention ----------
 st.markdown(f"## 🛡️ {tips_title}")
