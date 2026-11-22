@@ -1,7 +1,6 @@
-# Urban Dengue Outbreak Early-Warning System
+# 🦟 DengueWatch — Ward-Level Dengue Risk Assessment
 
-## Overview
-Stage 1 prototype predicting ward-level dengue outbreak risk using weather lags and vulnerability indicators
+A Streamlit and Python web application built to estimate ward-level dengue outbreak risk in Chattogram using historical meteorological and ward surveillance data (`dengue_data.csv`), weather simulation, and a serialized machine learning model (`dengue_model.joblib`).
 
 ## Team & Roles
 - Team Name: The Newbies
@@ -9,48 +8,47 @@ Stage 1 prototype predicting ward-level dengue outbreak risk using weather lags 
 - Dilshad Zaman Mithila
 - Mary Patricia Argha
 
-# 🦟 Dengue Outbreak Prediction (Ward-Level Risk Assessment)
-
-A machine learning and Streamlit web application built to forecast ward-level dengue outbreak risk in Chattogram using historical meteorological data, ward infrastructure indicators, and multi-week lag features.
 
 ---
 
 ## 📌 Overview
 
-Dengue transmission is heavily influenced by delayed environmental conditions—such as rainfall accumulation, humidity, and temperature shifts occurring weeks prior to case spikes. This project analyzes ward-level records (`dengue_data.csv`) alongside a trained regression model (`dengue_model.joblib`) to estimate expected dengue cases, classify outbreak risk tiers, and visualize multi-day trends within individual wards.
+Dengue transmission is closely linked to environmental conditions—including rainfall, relative humidity, and temperature—as well as multi-week lag patterns. DengueWatch lets users select or enter a ward ID, adjust weather inputs (**Rainfall (mm)**, **Humidity (%)**, and **Temperature (°C)**), compare those inputs directly against ward dataset averages, and view the resulting **Risk Level**, **Infestation Probability (%)**, and **Predicted Cases**.
 
 ---
 
 ## ✨ Key Features
 
-- **Ward-Specific Risk Prediction (`predict.py`):**
-  - Selects a target ward (e.g., `CCC_Ward_01`, `CCC_Ward_03`) and evaluates either the latest available record or a specified historical date (`date_str`).
-  - Outputs continuous expected case estimates (`predicted_cases`) mapped into actionable risk tiers:
+- **Interactive Weather vs. Dataset Comparison (`app.py`):**
+  - Select a ward from the dropdown or enter a Ward ID manually.
+  - Adjust **Rainfall (mm)**, **Humidity (%)**, and **Temperature (°C)** and view a comparison table showing **Ward Dataset Avg**, **Your Input**, and **Difference vs Avg**.
+  - Displays **Risk Level**, **Infestation Probability (%)**, and **Predicted Cases** (with delta against the ward baseline).
+- **Lag Pipeline & Weather-Responsive Prediction (`predict.py`):**
+  - Chronologically sorts records per `ward_id` and builds multi-week lag features (`1w–4w` / `7`, `14`, `21`, and `28` days) for `rainfall_mm`, `avg_temp_c`, and `relative_humidity_pct`, aligning feature names with the trained model bundle.
+  - Combines model inference with weather suitability scoring (`predict_with_weather`) so low/unfavorable weather conditions lower risk and infestation probability, while dengue-favorable conditions raise them.
+  - Maps predicted cases into clear risk tiers:
     - **Low:** `< 1.0`
     - **Medium:** `1.0 – 2.99`
     - **High:** `3.0 – 5.99`
     - **Critical:** `≥ 6.0`
-- **Automated Feature Engineering & Lag Alignment (`build_features`):**
-  - Chronologically sorts ward time-series records and generates 1-to-4-week lag features (`7`, `14`, `21`, and `28` days) for `rainfall_mm`, `avg_temp_c`, and `relative_humidity_pct`.
-  - Maps dataset column names (`rainfall_mm_lag_*`, `avg_temp_c_lag_*`) to the exact feature names expected by the serialized model (`rain_lag_*`, `temp_lag_*`) to ensure accurate inference.
-- **Model Explainability (Top Drivers):**
-  - Extracts `feature_importances_` from the trained model to highlight the primary environmental and infrastructure drivers behind each ward's prediction.
-- **Multi-Day Ward Trend Comparison (`get_ward_history`):**
-  - Enables day-by-day historical comparison within a single selected ward rather than relying solely on a single-day snapshot.
+- **Prevention Guidance & Bilingual UI:**
+  - Includes weekly mosquito-prevention tips and a quick **English / বাংলা** language toggle.
 
 ---
 
 ## 🗂️ Project Structure
 
 ```text
-Dengue Outbreak/
-├── app.py                     # Streamlit frontend interface & multi-day comparison views
-├── predict.py                 # Feature engineering, lag alignment, and model inference pipeline
+Dengue-Outbreak-Prediction/
+├── app.py                     # Streamlit frontend, weather inputs, comparison table & UI
+├── predict.py                 # Feature/lag pipeline, weather suitability & model inference
+├── ARCHITECTURE.md            # System architecture, data flow, split rationale & caching notes
+├── requirements.txt           # Python package dependencies
+├── README.md                  # Project documentation and disclosures
 ├── data/
-│   └── dengue_data.csv        # Historical ward-level weather, infrastructure, and dengue dataset
-├── models/
-│   └── dengue_model.joblib    # Serialized trained ML model bundle and expected feature list
-└── README.md                  # Project documentation and disclosures
+│   └── dengue_data.csv        # Historical ward-level weather, lag & surveillance dataset
+└── models/
+    └── dengue_model.joblib    # Serialized trained model artifact and feature metadata
 ```
 
 ---
@@ -60,20 +58,21 @@ Dengue Outbreak/
 1. **Clone the repository:**
    ```bash
    git clone https://github.com/sapphire-stone/Dengue-Outbreak-Prediction.git
-   cd "Dengue Outbreak"
+   cd Dengue-Outbreak-Prediction
    ```
 
-2. **Install required dependencies:**
+2. **Install dependencies:**
    ```bash
-   pip install streamlit pandas joblib scikit-learn
+   pip install -r requirements.txt
    ```
+   *(Or directly: `pip install streamlit pandas numpy joblib scikit-learn`)*
 
-3. **Run the Streamlit application:**
+3. **Run the Streamlit app:**
    ```bash
    streamlit run app.py
    ```
 
-4. **Test the prediction pipeline via CLI:**
+4. **Run a quick CLI check on `predict.py`:**
    ```bash
    python predict.py
    ```
@@ -82,13 +81,12 @@ Dengue Outbreak/
 
 ## 📊 Methodology Notes
 
-- **Why Predicted Cases Are Decimal Values (`float`):** The model outputs continuous expected case estimates rather than discrete headcounts. These continuous predictions preserve granularity across varying weather lags before being grouped into clear risk tiers (`Low`, `Medium`, `High`, `Critical`).
-- **Dataset Date Coverage:** Predictions reflect the dates present in `data/dengue_data.csv` (currently running through `2025-12-29`). When no custom `date_str` is supplied, `predict_for_ward()` evaluates the most recent available record for that ward.
+- **Continuous Case Estimates:** Predicted cases are returned as continuous decimal values (`float`) before being grouped into `Low`, `Medium`, `High`, and `Critical` tiers.
+- **Academic Scope:** Predictions are intended for ward-level risk exploration and educational early-warning demonstration—not medical diagnosis.
 
 ---
 
-## 🔒 Data & API Disclosures
+## 🔒 Data, API & AI Disclosures
 
-- **External APIs:** This prediction pipeline operates **offline using local dataset files** (`data/dengue_data.csv`) and does **not** rely on third-party geocoding (`geopy` / Nominatim) or live external weather APIs during inference.
-- **Dataset & Model Assets:** All ward-level environmental indicators (`avg_temp_c`, `relative_humidity_pct`, `rainfall_mm`), infrastructure indices (`population_density_sqkm`, `water_logging_risk_index`, `sanitation_score`), and historical case records are sourced from the project's curated local dataset (`dengue_data.csv`).
-- **AI / Development Tooling Disclosure:** AI coding assistance was utilized during development for debugging Git workflows, resolving feature-column mapping issues in `predict.py`, structuring multi-day historical comparison helpers, and drafting documentation.
+- **External APIs:** No external weather, geocoding, or paid third-party APIs are called during prediction; inference runs locally using `data/dengue_data.csv` and `models/dengue_model.joblib`.
+- **AI Assistant Disclosure:** **Gemini** was used as an AI development assistant during building and refinement—including debugging `predict.py` and `app.py`, tuning weather-suitability risk behavior, drafting `ARCHITECTURE.md` and `README.md`, and planning the demo walkthrough.
