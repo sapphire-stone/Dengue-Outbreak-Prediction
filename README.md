@@ -85,7 +85,10 @@ Dengue-Outbreak-Prediction/
 - **Academic Scope:** Predictions are intended for ward-level risk exploration and educational early-warning demonstration—not medical diagnosis.
 
 ---
+## 🌐 Live Demo
+- **Streamlit App:** `https://your-app-name.streamlit.app`
 
+---
 ## 🔒 Data, API & AI Disclosures
 
 - **External APIs:** No external weather, geocoding, or paid third-party APIs are called during prediction; inference runs locally using `data/dengue_data.csv` and `models/dengue_model.joblib`.
