@@ -86,7 +86,7 @@ Dengue-Outbreak-Prediction/
 
 ---
 ## 🌐 Live Demo
-- **Streamlit App:** `https://your-app-name.streamlit.app`
+- **Streamlit App:** `(https://dengue-outbreak-prediction-kfraya46skv449qjhf7dgv.streamlit.app/)`
 
 ---
 ## 🔒 Data, API & AI Disclosures
