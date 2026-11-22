@@ -2,16 +2,57 @@ import base64
 from pathlib import Path
 import pandas as pd
 import streamlit as st
-from predict import get_available_wards, predict_for_ward
+from predict import (
+    get_available_wards,
+    get_ward_baseline,
+    predict_with_weather,
+)
 
 st.set_page_config(
     page_title="DengueWatch",
     page_icon="🦟",
-    layout="wide"
+    layout="wide",
 )
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_PATH = BASE_DIR / "data" / "dengue_data.csv"
+
+
+def _safe_float(val, default: float) -> float:
+    num = pd.to_numeric(val, errors="coerce")
+    return float(num) if pd.notna(num) else float(default)
+
+
+def _compute_infestation_prob(
+    predicted_cases: float,
+    rainfall_mm: float,
+    relative_humidity_pct: float,
+    avg_temp_c: float,
+) -> float:
+    rain_score = min(1.0, max(0.0, float(rainfall_mm) / 35.0))
+    hum_score = min(1.0, max(0.0, (float(relative_humidity_pct) - 45.0) / 40.0))
+    temp_val = float(avg_temp_c)
+    if 24.0 <= temp_val <= 32.0:
+        temp_score = 1.0
+    else:
+        dist = min(abs(temp_val - 24.0), abs(temp_val - 32.0))
+        temp_score = min(1.0, max(0.0, 1.0 - (dist / 10.0)))
+
+    suitability = (0.40 * rain_score) + (0.35 * hum_score) + (0.25 * temp_score)
+    case_norm = min(1.0, max(0.0, float(predicted_cases) / 6.0))
+    prob = ((0.65 * suitability) + (0.35 * case_norm)) * 100.0
+    return round(min(99.0, max(2.0, prob)), 1)
+
+
+@st.cache_data(show_spinner=False)
+def cached_wards() -> list[str]:
+    return get_available_wards()
+
+
+@st.cache_data(show_spinner=False)
+def cached_baseline(ward_id: str) -> dict:
+    return get_ward_baseline(ward_id)
+
 
 # ---------- Background Image ----------
 image_path = BASE_DIR / "assets" / "mosquito_bg.png"
@@ -38,9 +79,15 @@ st.markdown(f"""
     background: #16070C;
 }}
 
+.stAppViewContainer .stMain .stMainBlockContainer,
 .block-container {{
-    padding-top: 1.5rem;
-    padding-bottom: 3rem;
+    padding-top: 1.2rem !important;
+    padding-bottom: 3rem !important;
+}}
+
+header[data-testid="stHeader"] {{
+    height: 2.2rem !important;
+    background: transparent !important;
 }}
 
 .hero {{
@@ -62,13 +109,6 @@ st.markdown(f"""
 .hero p {{
     font-size: 18px;
     color: #D5C3C7;
-}}
-
-.risk-card {{
-    background: #1B1116;
-    border: 1px solid #6C2B3B;
-    padding: 25px;
-    border-radius: 18px;
 }}
 
 .tip-card {{
@@ -107,13 +147,13 @@ st.sidebar.caption("Community Dengue Early Warning")
 
 page = st.sidebar.radio(
     "Navigation",
-    ["Home", "Check My Area", "Prevention Guide", "Symptom Guide", "AI Surveillance"]
+    ["Home", "Check My Area", "Prevention Guide", "Symptom Guide", "AI Surveillance"],
 )
 
 language = st.sidebar.radio(
     "Language / ভাষা",
     ["English", "বাংলা"],
-    horizontal=True
+    horizontal=True,
 )
 
 # ---------- Text Content ----------
@@ -125,7 +165,7 @@ if language == "English":
     tips = [
         ("🪣 Remove Standing Water", "Empty water from buckets, pots, trays and unused containers."),
         ("🚰 Cover Water Storage", "Keep water tanks and containers tightly covered."),
-        ("🛡️ Prevent Mosquito Bites", "Use mosquito nets, repellents and protective clothing.")
+        ("🛡️ Prevent Mosquito Bites", "Use mosquito nets, repellents and protective clothing."),
     ]
 else:
     title = "আপনার এলাকার ঝুঁকি জানুন, ডেঙ্গু থেকে সচেতন থাকুন।"
@@ -135,13 +175,13 @@ else:
     tips = [
         ("🪣 জমে থাকা পানি সরান", "বালতি, টব ও অন্যান্য পাত্রের জমে থাকা পানি ফেলে দিন।"),
         ("🚰 পানির পাত্র ঢেকে রাখুন", "পানির ট্যাংক ও পাত্র ভালোভাবে ঢেকে রাখুন।"),
-        ("🛡️ মশার কামড় থেকে বাঁচুন", "মশারি, মশা প্রতিরোধক ও সুরক্ষামূলক পোশাক ব্যবহার করুন।")
+        ("🛡️ মশার কামড় থেকে বাঁচুন", "মশারি, মশা প্রতিরোধক ও সুরক্ষামূলক পোশাক ব্যবহার করুন।"),
     ]
 
 # ---------- Hero ----------
 st.markdown(f"""
 <div class="hero">
-    <div class="small-label">AI-POWERED DENGUE EARLY WARNING</div>
+    <div class="small-label"> DENGUE EARLY WARNING</div>
     <h1>{title}</h1>
     <p>{subtitle}</p>
 </div>
@@ -149,108 +189,157 @@ st.markdown(f"""
 
 st.write("")
 
-
-@st.cache_data
-def get_ward_weather_row(ward_id: str) -> dict:
-    df = pd.read_csv(DATA_PATH)
-    if "ward_id" not in df.columns:
-        return {}
-    rows = df[df["ward_id"].astype(str) == str(ward_id)].copy()
-    if rows.empty:
-        return {}
-    if "date" in rows.columns:
-        rows["date"] = pd.to_datetime(rows["date"], errors="coerce")
-        rows = rows.sort_values("date")
-    latest = rows.iloc[-1]
-    return {
-        "city": latest.get("city", "N/A"),
-        "avg_temp_c": latest.get("avg_temp_c"),
-        "relative_humidity_pct": latest.get("relative_humidity_pct"),
-        "rainfall_mm": latest.get("rainfall_mm"),
-    }
-
-
-# ---------- Risk Checker ----------
+# ---------- Ward Selection ----------
 st.markdown(f"## 📍 {check_text}")
 
-available_wards = get_available_wards()
+available_wards = cached_wards()
 
-col1, col2 = st.columns([1, 1.5])
+col_pick, col_type = st.columns([1, 1])
 
-with col1:
+with col_pick:
     selected_ward = st.selectbox(
-        "Select Ward ID / ওয়ার্ড আইডি নির্বাচন করুন",
+        "Select Ward / ওয়ার্ড নির্বাচন করুন",
         options=available_wards if available_wards else ["No wards found"],
-        index=0
+        format_func=lambda w: w.replace("_", " "),
+        index=0,
     )
 
+with col_type:
     typed_ward = st.text_input(
         "Or type a Ward ID",
-        placeholder="Example: CCC_Ward_01"
+        placeholder="Example: CCC_Ward_01",
     )
 
-    ward_to_check = (
-        typed_ward.strip()
-        if typed_ward.strip()
-        else (selected_ward if available_wards else "")
-    )
+active_ward = (
+    typed_ward.strip()
+    if typed_ward.strip()
+    else (selected_ward if available_wards and selected_ward != "No wards found" else "")
+)
 
-    check_button = st.button("Check Dengue Risk", use_container_width=True)
+# ---------- Dataset Comparison & Infestation Check ----------
+if active_ward:
+    try:
+        baseline = cached_baseline(active_ward)
+        row = baseline["row"]
+        hist_avg = baseline["hist_avg"]
+        base_pred = baseline["base_pred"]
 
-with col2:
-    if check_button:
-        if not ward_to_check:
-            st.warning("Please select or enter a Ward ID first.")
+        st.subheader(f"Weather vs. Dataset Statistics — {active_ward.replace('_', ' ')}")
+
+        w1, w2, w3 = st.columns(3)
+        with w1:
+            rain_input = st.number_input(
+                "Rainfall (mm)",
+                min_value=0.0,
+                value=_safe_float(row.get("rainfall_mm"), 0.0),
+                step=0.5,
+                format="%.1f",
+                key=f"rain_in_{active_ward}",
+            )
+        with w2:
+            humidity_input = st.number_input(
+                "Humidity (%)",
+                min_value=0.0,
+                max_value=100.0,
+                value=_safe_float(row.get("relative_humidity_pct"), 75.0),
+                step=0.5,
+                format="%.1f",
+                key=f"hum_in_{active_ward}",
+            )
+        with w3:
+            temp_input = st.number_input(
+                "Temperature (°C)",
+                min_value=0.0,
+                max_value=60.0,
+                value=_safe_float(row.get("avg_temp_c"), 28.0),
+                step=0.5,
+                format="%.1f",
+                key=f"temp_in_{active_ward}",
+            )
+
+        sim_pred = predict_with_weather(
+            ward_id=active_ward,
+            rainfall_mm=rain_input,
+            relative_humidity_pct=humidity_input,
+            avg_temp_c=temp_input,
+        )
+
+        sim_cases = _safe_float(sim_pred.get("predicted_cases"), 0.0)
+        base_cases = _safe_float(base_pred.get("predicted_cases"), 0.0)
+
+        if "infestation_prob" in sim_pred and pd.notna(sim_pred["infestation_prob"]):
+            infestation_prob = _safe_float(sim_pred["infestation_prob"], 0.0)
         else:
-            try:
-                with st.spinner(f"Running model prediction for {ward_to_check}..."):
-                    pred = predict_for_ward(ward_to_check)
-                    weather = get_ward_weather_row(ward_to_check)
+            infestation_prob = _compute_infestation_prob(
+                sim_cases, rain_input, humidity_input, temp_input
+            )
 
-                risk = pred["risk_tier"]
-                risk_colors = {
-                    "Low": "#B6D96C",
-                    "Medium": "#E8C76A",
-                    "Moderate": "#E8C76A",
-                    "High": "#E46C78",
-                    "Critical": "#FF4D5D"
-                }
-                risk_color = risk_colors.get(risk, "#E8C76A")
+        risk_tier = str(sim_pred.get("risk_tier") or "Low")
 
-                temp_val = weather.get("avg_temp_c")
-                hum_val = weather.get("relative_humidity_pct")
-                rain_val = weather.get("rainfall_mm")
-                city_name = weather.get("city", "N/A")
+        avg_rain = _safe_float(hist_avg.get("rainfall_mm"), 0.0)
+        avg_hum = _safe_float(hist_avg.get("relative_humidity_pct"), 75.0)
+        avg_temp = _safe_float(hist_avg.get("avg_temp_c"), 28.0)
 
-                temp_str = f"{float(temp_val):.1f}°C" if pd.notna(temp_val) else "N/A"
-                hum_str = f"{float(hum_val):.1f}%" if pd.notna(hum_val) else "N/A"
-                rain_str = f"{float(rain_val):.1f} mm" if pd.notna(rain_val) else "N/A"
+        diff_rain = rain_input - avg_rain
+        diff_hum = humidity_input - avg_hum
+        diff_temp = temp_input - avg_temp
 
-                st.markdown(f"""
-                <div class="risk-card">
-                    <div class="small-label">MODEL RISK PREDICTION</div>
-                    <h2 style="color:{risk_color};">⚠️ {risk} Risk</h2>
-                    <p><b>Ward ID:</b> {pred["ward_id"]} &nbsp;|&nbsp; <b>City:</b> {city_name} &nbsp;|&nbsp; <b>Date:</b> {pred["date"]}</p>
-                    <p><b>Predicted Cases:</b> {pred["predicted_cases"]:.2f}</p>
-                    <hr>
-                    <b>Weather Information (from dataset)</b>
-                    <ul>
-                        <li>Temperature: {temp_str}</li>
-                        <li>Humidity: {hum_str}</li>
-                        <li>Rainfall: {rain_str}</li>
-                    </ul>
-                </div>
-                """, unsafe_allow_html=True)
+        risk_badges = {
+            "Low": ("🟢 Low Risk", "success"),
+            "Medium": ("🟡 Medium Risk", "warning"),
+            "Moderate": ("🟡 Moderate Risk", "warning"),
+            "High": ("🟠 High Risk", "error"),
+            "Critical": ("🔴 Critical Risk", "error"),
+        }
+        risk_label, box_style = risk_badges.get(risk_tier, (f"⚠️ {risk_tier} Risk", "warning"))
 
-                if pred.get("top_drivers"):
-                    st.markdown("### 📊 Top Model Drivers")
-                    for item in pred["top_drivers"]:
-                        st.write(f"- **{item['feature']}**: {item['importance']}")
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Risk Level", risk_tier)
+        m2.metric("Infestation Probability", f"{infestation_prob:.0f}%")
+        m3.metric(
+            "Predicted Cases",
+            f"{sim_cases:.2f}",
+            f"{sim_cases - base_cases:+.2f} vs dataset avg",
+        )
 
-            except Exception as error:
-                st.error(f"Could not predict for '{ward_to_check}': {error}")
-    else:
-        st.info("Select or type a Ward ID and click **Check Dengue Risk** to see your trained model's prediction.")
+        comp_df = pd.DataFrame({
+            "Metric": ["Rainfall (mm)", "Humidity (%)", "Temperature (°C)", "Predicted Cases"],
+            "Ward Dataset Avg": [
+                f"{avg_rain:.1f}",
+                f"{avg_hum:.1f}",
+                f"{avg_temp:.1f}",
+                f"{base_cases:.2f}",
+            ],
+            "Your Input": [
+                f"{rain_input:.1f}",
+                f"{humidity_input:.1f}",
+                f"{temp_input:.1f}",
+                f"{sim_cases:.2f}",
+            ],
+            "Difference vs Avg": [
+                f"{diff_rain:+.1f}",
+                f"{diff_hum:+.1f}",
+                f"{diff_temp:+.1f}",
+                f"{sim_cases - base_cases:+.2f}",
+            ],
+        })
+        st.dataframe(comp_df, use_container_width=True, hide_index=True)
+
+        summary_msg = (
+            f"**{risk_label}** in **{active_ward.replace('_', ' ')}** "
+            f"(**{infestation_prob:.0f}%** infestation probability, **{sim_cases:.2f}** est. cases) — "
+            f"based on your rainfall, humidity, and temperature inputs compared against ward dataset averages."
+        )
+
+        if box_style == "error":
+            st.error(summary_msg)
+        elif box_style == "warning":
+            st.warning(summary_msg)
+        else:
+            st.success(summary_msg)
+
+    except Exception as error:
+        st.warning(f"Could not run comparison: {error}")
 
 # ---------- Prevention ----------
 st.markdown(f"## 🛡️ {tips_title}")
@@ -272,7 +361,7 @@ st.write("")
 st.markdown("""
 ---
 <div style="text-align:center;color:#8F8589;">
-DengueWatch AI · Community Awareness & Early Warning<br>
+DengueWatch · Community Awareness & Early Warning<br>
 An academic project — predictions are not a medical diagnosis.
 </div>
 """, unsafe_allow_html=True)
